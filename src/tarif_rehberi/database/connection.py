@@ -1,10 +1,10 @@
 import sqlite3
 
-import tarif_rehberi.globals as globals
+from tarif_rehberi import globals_
 
 
 def get_connection() -> sqlite3.Connection:
-    globals.DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    connection = sqlite3.connect(globals.DATABASE_PATH)
-    connection.execute("PRAGMA foreign_key = ON")
-    return connection
+    globals_.DATABASE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(globals_.DATABASE_PATH)
+    conn.execute("PRAGMA foreign_keys = ON;")
+    return conn

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from tarif_rehberi import globals
+from tarif_rehberi import globals_
 from tarif_rehberi.database.schema import init_db
 
 
@@ -11,12 +11,12 @@ from tarif_rehberi.database.schema import init_db
 def test_db(
     tmp_path: Path,
 ) -> Generator[None, None, None]:
-    original_database_path: Path = globals.DATABASE_PATH
+    original_database_path: Path = globals_.DATABASE_PATH
 
-    globals.DATABASE_PATH = tmp_path / "test.db"
+    globals_.DATABASE_PATH = tmp_path / "test.db"
 
     init_db()
 
     yield
 
-    globals.DATABASE_PATH = original_database_path
+    globals_.DATABASE_PATH = original_database_path

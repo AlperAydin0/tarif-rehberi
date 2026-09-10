@@ -26,3 +26,11 @@ def test_database_tables_are_created(test_db) -> None:
         assert "ingredients" in tables
         assert "recipe_ingredients" in tables
         assert "recipes" in tables
+
+
+def test_foreign_keys_are_enabled(test_db) -> None:
+    with get_connection() as connection:
+        cursor = connection.execute("PRAGMA foreign_keys")
+        result: tuple[int] | None = cursor.fetchone()
+
+    assert result == (1,)

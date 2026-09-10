@@ -1,5 +1,3 @@
-from pathlib import Path
-
 from tarif_rehberi.database.connection import get_connection
 
 CREATE_RECIPES_TABLE = """
