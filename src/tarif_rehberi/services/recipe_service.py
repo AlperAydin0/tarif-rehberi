@@ -53,16 +53,31 @@ def recommend_recipes(user_ingredients: dict[int, float]) -> list[RecipeMatch]:
         if recipe.id is None:
             continue
 
-        match: float = calculate_recipe_match(
+        match_percentage: float = calculate_recipe_match(
             recipe.id,
             user_ingredients,
         )
-
-        if match <= 0.0:
+        if match_percentage <= 0.0:
             continue
 
-        recommendations.append((recipe, match))
+        recommendations.append((recipe, match_percentage))
 
-    recommendations.sort(key=lambda r: (-r[1], r[0].name))
+    recommendations.sort(
+        key=lambda item: (
+            -item[1],
+            item[0].name,
+        )
+    )
 
     return recommendations
+
+
+def calculate_recipe_cost(recipe_id: int) -> float:
+    recipe_ingredients: list[RecipeIngredient] = get_recipe_ingredients(recipe_id)
+
+    total_cost: float = 0.0
+
+    for ingredient, required_quantity in recipe_ingredients:
+        total_cost += ingredient.unit_price * required_quantity
+
+    return round(total_cost, 2)
