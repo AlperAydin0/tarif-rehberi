@@ -3,38 +3,364 @@ import unicodedata
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QDoubleSpinBox,
+    QFormLayout,
     QHBoxLayout,
+    QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
     QMainWindow,
+    QMessageBox,
     QPushButton,
+    QSpinBox,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
+from tarif_rehberi.models.ingredient import Ingredient
 from tarif_rehberi.models.recipe import Recipe
-from tarif_rehberi.repositories.recipe_ingredient_repository import (
-    get_recipe_ingredients,
+from tarif_rehberi.repositories.ingredient_repository import (
+    create_ingredient,
+    delete_ingredient,
+    get_all_ingredients,
+    update_ingredient,
 )
-from tarif_rehberi.repositories.recipe_repository import get_all_recipes
+from tarif_rehberi.repositories.recipe_ingredient_repository import (
+    add_ingredient_to_recipe,
+    get_recipe_ingredients,
+    remove_ingredient_from_recipe,
+)
+from tarif_rehberi.repositories.recipe_repository import (
+    create_recipe,
+    delete_recipe,
+    get_all_recipes,
+    update_recipe,
+)
+from tarif_rehberi.services.ingredient_service import create_ingredient_if_not_exists
 from tarif_rehberi.services.recipe_service import (
     calculate_recipe_cost,
-    find_missing_ingredients,
+    calculate_recipe_match,
+    recommend_recipes,
 )
+
+
+class RecipeDialog(QDialog):
+    def __init__(self, parent=None, recipe: Recipe | None = None) -> None:
+        super().__init__(parent)
+
+        self.setWindowTitle("Tarif Güncelle" if recipe else "Tarif Ekle")
+        self.resize(450, 400)
+
+        layout = QFormLayout(self)
+
+        self.name_input = QLineEdit()
+        self.category_input = QLineEdit()
+
+        self.prep_time_input = QSpinBox()
+        self.prep_time_input.setRange(1, 1440)
+        self.prep_time_input.setSuffix(" dk")
+
+        self.instructions_input = QTextEdit()
+
+        self.ingredients_input = QTextEdit()
+        self.ingredients_input.setPlaceholderText(
+            "Her satıra bir malzeme yazın.\nÖrnek:\nDomates=2\nYumurta=3\nBiber=1"
+        )
+
+        layout.addRow("Tarif Adı:", self.name_input)
+        layout.addRow("Kategori:", self.category_input)
+        layout.addRow(
+            "Hazırlama Süresi:",
+            self.prep_time_input,
+        )
+        layout.addRow(
+            "Malzemeler:",
+            self.ingredients_input,
+        )
+        layout.addRow(
+            "Talimatlar:",
+            self.instructions_input,
+        )
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout.addRow(buttons)
+
+        if recipe is not None:
+            self.name_input.setText(recipe.name)
+            self.category_input.setText(recipe.category)
+            self.prep_time_input.setValue(recipe.prep_time)
+            self.instructions_input.setPlainText(recipe.instructions)
+
+            ingredients = get_recipe_ingredients(recipe.id)
+
+            ingredient_lines = [
+                f"{ingredient.name}={required_quantity:g}"
+                for ingredient, required_quantity in ingredients
+            ]
+
+            self.ingredients_input.setPlainText("\n".join(ingredient_lines))
+
+    def get_recipe(self) -> Recipe:
+        return Recipe(
+            id=None,
+            name=self.name_input.text().strip(),
+            category=self.category_input.text().strip(),
+            prep_time=self.prep_time_input.value(),
+            instructions=self.instructions_input.toPlainText().strip(),
+        )
+
+    def get_ingredients(self) -> list[tuple[str, float]]:
+        result = []
+
+        for line in self.ingredients_input.toPlainText().splitlines():
+            line = line.strip()
+
+            if not line:
+                continue
+
+            if "=" not in line:
+                continue
+
+            name, quantity_text = line.split("=", 1)
+
+            name = name.strip()
+
+            try:
+                quantity = float(quantity_text.strip())
+            except ValueError:
+                continue
+
+            if name and quantity > 0:
+                result.append((name, quantity))
+
+        return result
+
+
+class IngredientDialog(QDialog):
+    def __init__(self, ingredient=None, parent=None):
+        super().__init__(parent)
+
+        self.setWindowTitle("Malzeme Düzenle" if ingredient else "Malzeme Ekle")
+        self.setMinimumWidth(400)
+
+        self.name_input = QLineEdit()
+        self.quantity_input = QDoubleSpinBox()
+        self.quantity_input.setRange(0.0, 1_000_000.0)
+        self.quantity_input.setDecimals(2)
+
+        self.unit_input = QLineEdit()
+        self.unit_price_input = QDoubleSpinBox()
+        self.unit_price_input.setRange(0.0, 1_000_000.0)
+        self.unit_price_input.setDecimals(2)
+
+        form = QFormLayout()
+        form.addRow("Malzeme adı:", self.name_input)
+        form.addRow("Stok miktarı:", self.quantity_input)
+        form.addRow("Birim:", self.unit_input)
+        form.addRow("Birim fiyatı:", self.unit_price_input)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
+        )
+
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(buttons)
+
+        if isinstance(ingredient, Ingredient):
+            self.name_input.setText(ingredient.name)
+            self.quantity_input.setValue(ingredient.quantity)
+            self.unit_input.setText(ingredient.unit)
+            self.unit_price_input.setValue(ingredient.unit_price)
+            self._ingredient = ingredient
+        else:
+            self._ingredient = None
+
+    def get_ingredient(self):
+        name = self.name_input.text().strip()
+        unit = self.unit_input.text().strip()
+
+        if not name:
+            raise ValueError("Malzeme adı boş bırakılamaz.")
+
+        if not unit:
+            raise ValueError("Birim boş bırakılamaz.")
+
+        return Ingredient(
+            id=self._ingredient.id if self._ingredient else None,
+            name=name,
+            quantity=self.quantity_input.value(),
+            unit=unit,
+            unit_price=self.unit_price_input.value(),
+        )
+
+
+class IngredientManagementDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        self.setWindowTitle("Malzeme Yönetimi")
+        self.resize(650, 450)
+
+        self.ingredient_list = QListWidget()
+
+        self.add_button = QPushButton("Malzeme Ekle")
+        self.update_button = QPushButton("Malzemeyi Güncelle")
+        self.delete_button = QPushButton("Malzemeyi Sil")
+        self.refresh_button = QPushButton("Yenile")
+
+        self.add_button.clicked.connect(self._add_ingredient)
+        self.update_button.clicked.connect(self._update_ingredient)
+        self.delete_button.clicked.connect(self._delete_ingredient)
+        self.refresh_button.clicked.connect(self._load_ingredients)
+
+        button_layout = QHBoxLayout()
+        button_layout.addWidget(self.add_button)
+        button_layout.addWidget(self.update_button)
+        button_layout.addWidget(self.delete_button)
+        button_layout.addWidget(self.refresh_button)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.ingredient_list)
+        layout.addLayout(button_layout)
+
+        self._load_ingredients()
+
+    def _load_ingredients(self) -> None:
+        self.ingredient_list.clear()
+
+        ingredients = get_all_ingredients()
+
+        for ingredient in ingredients:
+            item = QListWidgetItem(
+                f"{ingredient.name} | "
+                f"Stok: {ingredient.quantity:g} {ingredient.unit} | "
+                f"Birim fiyat: {ingredient.unit_price:.2f} TL"
+            )
+
+            item.setData(Qt.ItemDataRole.UserRole, ingredient.id)
+
+            self.ingredient_list.addItem(item)
+
+    def _selected_ingredient(self):
+        item = self.ingredient_list.currentItem()
+
+        if item is None:
+            return None
+
+        ingredient_id = item.data(Qt.ItemDataRole.UserRole)
+
+        for ingredient in get_all_ingredients():
+            if ingredient.id == ingredient_id:
+                return ingredient
+
+        return None
+
+    def _add_ingredient(self) -> None:
+        dialog = IngredientDialog(self)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        try:
+            ingredient = dialog.get_ingredient()
+            create_ingredient(ingredient)
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Hata",
+                f"Malzeme eklenemedi:\n{exc}",
+            )
+            return
+
+        self._load_ingredients()
+
+    def _update_ingredient(self) -> None:
+        ingredient = self._selected_ingredient()
+
+        if ingredient is None:
+            QMessageBox.warning(
+                self,
+                "Malzeme seçilmedi",
+                "Lütfen güncellenecek malzemeyi seçin.",
+            )
+            return
+
+        dialog = IngredientDialog(ingredient, self)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        try:
+            updated = dialog.get_ingredient()
+            update_ingredient(updated)
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Hata",
+                f"Malzeme güncellenemedi:\n{exc}",
+            )
+            return
+
+        self._load_ingredients()
+
+    def _delete_ingredient(self) -> None:
+        ingredient = self._selected_ingredient()
+
+        if ingredient is None:
+            QMessageBox.warning(
+                self,
+                "Malzeme seçilmedi",
+                "Lütfen silinecek malzemeyi seçin.",
+            )
+            return
+
+        answer = QMessageBox.question(
+            self,
+            "Malzemeyi Sil",
+            f"'{ingredient.name}' malzemesini silmek istediğinize emin misiniz?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        )
+
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            delete_ingredient(ingredient.id)
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Hata",
+                f"Malzeme silinemedi:\n{exc}",
+            )
+            return
+
+        self._load_ingredients()
 
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
 
-        self._match_percentages = {}
         self.setWindowTitle("Tarif Rehberi")
-        self.resize(1000, 700)
+        self.resize(1100, 750)
 
-        self._recipes: list[Recipe] = []
-        self._visible_recipes: list[Recipe] = []
+        self._recipes = []
+        self._visible_recipes = []
+        self._match_percentages = {}
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -64,10 +390,45 @@ class MainWindow(QMainWindow):
         filter_layout.addWidget(self.sort_selector)
 
         self.ingredient_input = QLineEdit()
-        self.ingredient_input.setPlaceholderText("Malzeme ara veya ekle...")
+        self.ingredient_input.setPlaceholderText("Malzeme ara...")
         filter_layout.addWidget(self.ingredient_input)
 
+        self.min_ingredient_count = QSpinBox()
+        self.min_ingredient_count.setRange(0, 100)
+        self.min_ingredient_count.setSpecialValueText("Malzeme sayısı min")
+        filter_layout.addWidget(self.min_ingredient_count)
+
+        self.max_ingredient_count = QSpinBox()
+        self.max_ingredient_count.setRange(0, 100)
+        self.max_ingredient_count.setSpecialValueText("Malzeme sayısı max")
+        filter_layout.addWidget(self.max_ingredient_count)
+
+        self.min_cost_input = QDoubleSpinBox()
+        self.min_cost_input.setRange(0, 1_000_000)
+        self.min_cost_input.setDecimals(2)
+        self.min_cost_input.setSuffix(" TL")
+        self.min_cost_input.setSpecialValueText("Min maliyet")
+        filter_layout.addWidget(self.min_cost_input)
+
+        self.max_cost_input = QDoubleSpinBox()
+        self.max_cost_input.setRange(0, 1_000_000)
+        self.max_cost_input.setDecimals(2)
+        self.max_cost_input.setSuffix(" TL")
+        self.max_cost_input.setSpecialValueText("Max maliyet")
+        filter_layout.addWidget(self.max_cost_input)
+
         main_layout.addLayout(filter_layout)
+
+        action_layout = QHBoxLayout()
+
+        self.recommend_button = QPushButton("Mevcut Malzemelerime Göre Öner")
+
+        self.clear_filters_button = QPushButton("Filtreleri Temizle")
+
+        action_layout.addWidget(self.recommend_button)
+        action_layout.addWidget(self.clear_filters_button)
+
+        main_layout.addLayout(action_layout)
 
         self.recipe_list = QListWidget()
         main_layout.addWidget(self.recipe_list)
@@ -77,26 +438,66 @@ class MainWindow(QMainWindow):
         self.recipe_detail.setPlaceholderText("Tarif detayları burada gösterilecek...")
         main_layout.addWidget(self.recipe_detail)
 
-        self.recipe_list.currentRowChanged.connect(self._show_recipe_detail)
-        # self.recipe_list.itemSelectionChanged.connect(self._handle_recipe_selection)
         button_layout = QHBoxLayout()
 
         self.add_recipe_button = QPushButton("Tarif Ekle")
-        self.update_recipe_button = QPushButton("Tarif Güncelle")
-        self.delete_recipe_button = QPushButton("Tarif Sil")
 
+        self.update_recipe_button = QPushButton("Tarif Güncelle")
+
+        self.delete_recipe_button = QPushButton("Tarif Sil")
+        self.ingredient_management_button = QPushButton("Malzeme Yönetimi")
+        self.ingredient_management_button.clicked.connect(
+            self._open_ingredient_management
+        )
+        button_layout.addWidget(self.ingredient_management_button)
         button_layout.addWidget(self.add_recipe_button)
         button_layout.addWidget(self.update_recipe_button)
         button_layout.addWidget(self.delete_recipe_button)
 
         main_layout.addLayout(button_layout)
 
-        self.sort_selector.currentTextChanged.connect(self._sort_recipes)
-        self.search_input.textChanged.connect(self._filter_recipes)
-        self.ingredient_input.textChanged.connect(self._filter_by_ingredient)
-        self.category_filter.currentTextChanged.connect(self._filter_by_category)
+        self.recipe_list.currentRowChanged.connect(self._show_recipe_detail)
+
+        self.search_input.textChanged.connect(self._refresh_filters)
+
+        self.ingredient_input.textChanged.connect(self._refresh_filters)
+
+        self.category_filter.currentTextChanged.connect(self._refresh_filters)
+
+        self.sort_selector.currentTextChanged.connect(self._refresh_filters)
+
+        self.min_ingredient_count.valueChanged.connect(self._refresh_filters)
+
+        self.max_ingredient_count.valueChanged.connect(self._refresh_filters)
+
+        self.min_cost_input.valueChanged.connect(self._refresh_filters)
+
+        self.max_cost_input.valueChanged.connect(self._refresh_filters)
+
+        self.add_recipe_button.clicked.connect(self._add_recipe)
+
+        self.update_recipe_button.clicked.connect(self._update_recipe)
+
+        self.delete_recipe_button.clicked.connect(self._delete_recipe)
+
+        self.recommend_button.clicked.connect(self._show_recommendations)
+
+        self.clear_filters_button.clicked.connect(self._clear_filters)
 
         self._load_recipes()
+
+    @staticmethod
+    def _normalize_search_text(text: str) -> str:
+        text = text.strip().casefold()
+
+        return "".join(
+            character
+            for character in unicodedata.normalize(
+                "NFD",
+                text,
+            )
+            if unicodedata.category(character) != "Mn"
+        )
 
     def _load_recipes(self) -> None:
         self._recipes = get_all_recipes()
@@ -104,6 +505,7 @@ class MainWindow(QMainWindow):
         current_category = self.category_filter.currentText()
 
         self.category_filter.blockSignals(True)
+
         self.category_filter.clear()
         self.category_filter.addItem("Tüm Kategoriler")
 
@@ -122,230 +524,9 @@ class MainWindow(QMainWindow):
 
         self._match_percentages = {}
 
-        self._display_recipes(self._recipes)
+        self._refresh_filters()
 
-    def _display_recipes(self, recipes: list[Recipe]) -> None:
-        self.recipe_list.blockSignals(True)
-        self.recipe_list.clear()
-
-        self._visible_recipes = list(recipes)
-
-        for recipe in self._visible_recipes:
-            match_percentage = self._match_percentages.get(recipe.id)
-
-            display_text = f"{recipe.name} | {recipe.prep_time} dk | {recipe.category}"
-
-            if match_percentage is not None:
-                display_text += f" | Eşleşme: %{match_percentage:.0f}"
-
-            item = QListWidgetItem(display_text)
-
-            item.setData(
-                Qt.UserRole,
-                recipe.id,
-            )
-
-            recipe_ingredients = get_recipe_ingredients(recipe.id)
-
-            is_sufficient = all(
-                ingredient.quantity >= required_quantity
-                for ingredient, required_quantity in recipe_ingredients
-            )
-
-            item.setData(
-                Qt.UserRole + 1,
-                "sufficient" if is_sufficient else "insufficient",
-            )
-            if is_sufficient:
-                item.setForeground(Qt.green)
-            else:
-                item.setForeground(Qt.red)
-
-            self.recipe_list.addItem(item)
-
-        self.recipe_list.setCurrentRow(-1)
-        self.recipe_detail.clear()
-
-        self.recipe_list.blockSignals(False)
-
-    @staticmethod
-    def _normalize_search_text(text: str) -> str:
-        text = text.strip().casefold()
-
-        return "".join(
-            character
-            for character in unicodedata.normalize("NFD", text)
-            if unicodedata.category(character) != "Mn"
-        )
-
-    def _show_recipe_detail(self, row: int) -> None:
-        self.recipe_detail.clear()
-
-        if row < 0:
-            return
-
-        item = self.recipe_list.item(row)
-
-        if item is None:
-            return
-
-        recipe_id = item.data(Qt.UserRole)
-
-        if recipe_id is None:
-            return
-
-        recipe = next(
-            (recipe for recipe in self._visible_recipes if recipe.id == recipe_id),
-            None,
-        )
-
-        if recipe is None:
-            return
-
-        recipe_cost = calculate_recipe_cost(recipe.id)
-
-        recipe_ingredients = get_recipe_ingredients(recipe.id)
-
-        missing_cost = 0.0
-
-        for ingredient, required_quantity in recipe_ingredients:
-            if ingredient.quantity < required_quantity:
-                missing_quantity = required_quantity - ingredient.quantity
-                missing_cost += missing_quantity * ingredient.unit_price
-
-        detail_lines = [
-            f"Tarif: {recipe.name}",
-            f"Kategori: {recipe.category}",
-            f"Hazırlama Süresi: {recipe.prep_time} dakika",
-            f"Maliyet: {recipe_cost:.2f} TL",
-        ]
-
-        if missing_cost > 0:
-            detail_lines.append(f"Eksik Malzeme Maliyeti: {missing_cost:.2f} TL")
-
-        detail_lines.extend(
-            [
-                "",
-                "Malzemeler:",
-            ]
-        )
-
-        for ingredient, required_quantity in recipe_ingredients:
-            detail_lines.append(
-                f"- {ingredient.name}: {required_quantity:g} {ingredient.unit}"
-            )
-
-        detail_lines.extend(
-            [
-                "",
-                "Talimatlar:",
-                recipe.instructions,
-            ]
-        )
-
-        self.recipe_detail.setPlainText("\n".join(detail_lines))
-
-    def _recipe_contains_ingredient(self, recipe: Recipe, ingredient_name: str) -> bool:
-        search_text = self._normalize_search_text(ingredient_name)
-
-        recipe_ingredients = get_recipe_ingredients(recipe.id)
-
-        return any(
-            search_text in self._normalize_search_text(ingredient.name)
-            for ingredient, _ in recipe_ingredients
-        )
-
-    def _filter_recipes(self, text: str) -> None:
-        search_text = self._normalize_search_text(text)
-        selected_category = self.category_filter.currentText()
-
-        filtered_recipes = list(self._recipes)
-
-        if selected_category != "Tüm Kategoriler":
-            filtered_recipes = [
-                recipe
-                for recipe in filtered_recipes
-                if recipe.category == selected_category
-            ]
-
-        if search_text:
-            filtered_recipes = [
-                recipe
-                for recipe in filtered_recipes
-                if search_text in self._normalize_search_text(recipe.name)
-            ]
-
-        self._display_recipes(filtered_recipes)
-
-    def _filter_by_ingredient(self, text: str) -> None:
-        search_text = text.strip()
-
-        if not search_text:
-            self._filter_recipes(self.search_input.text())
-            return
-
-        selected_category = self.category_filter.currentText()
-
-        recipes = list(self._recipes)
-
-        if selected_category != "Tüm Kategoriler":
-            recipes = [
-                recipe for recipe in recipes if recipe.category == selected_category
-            ]
-
-        normalized_search = self._normalize_search_text(search_text)
-
-        matching_recipes = []
-
-        for recipe in recipes:
-            recipe_ingredients = get_recipe_ingredients(recipe.id)
-
-            if not recipe_ingredients:
-                continue
-
-            matched_count = sum(
-                normalized_search in self._normalize_search_text(ingredient.name)
-                for ingredient, _ in recipe_ingredients
-            )
-
-            if matched_count == 0:
-                continue
-
-            match_percentage = matched_count / len(recipe_ingredients) * 100
-
-            matching_recipes.append((recipe, match_percentage))
-
-        matching_recipes.sort(
-            key=lambda item: (
-                -item[1],
-                self._normalize_search_text(item[0].name),
-            )
-        )
-
-        self._match_percentages = {
-            recipe.id: percentage for recipe, percentage in matching_recipes
-        }
-
-        self._display_recipes([recipe for recipe, _ in matching_recipes])
-
-    def _filter_by_category(self, category: str) -> None:
-        search_text = self.search_input.text()
-
-        if search_text:
-            self._filter_recipes(search_text)
-            return
-
-        if category == "Tüm Kategoriler":
-            self._display_recipes(self._recipes)
-            return
-
-        filtered_recipes = [
-            recipe for recipe in self._recipes if recipe.category == category
-        ]
-
-        self._display_recipes(filtered_recipes)
-
-    def _sort_recipes(self, sort_option: str) -> None:
+    def _refresh_filters(self, *args) -> None:
         recipes = list(self._recipes)
 
         selected_category = self.category_filter.currentText()
@@ -355,14 +536,89 @@ class MainWindow(QMainWindow):
                 recipe for recipe in recipes if recipe.category == selected_category
             ]
 
-        search_text = self._normalize_search_text(self.search_input.text())
+        recipe_search = self._normalize_search_text(self.search_input.text())
 
-        if search_text:
+        if recipe_search:
             recipes = [
                 recipe
                 for recipe in recipes
-                if search_text in self._normalize_search_text(recipe.name)
+                if recipe_search in self._normalize_search_text(recipe.name)
             ]
+
+        ingredient_search = self._normalize_search_text(self.ingredient_input.text())
+
+        self._match_percentages = {}
+
+        if ingredient_search:
+            matching = []
+
+            for recipe in recipes:
+                ingredients = get_recipe_ingredients(recipe.id)
+
+                if not ingredients:
+                    continue
+
+                matched_count = sum(
+                    ingredient_search in self._normalize_search_text(ingredient.name)
+                    for ingredient, _ in ingredients
+                )
+
+                if matched_count == 0:
+                    continue
+
+                percentage = matched_count / len(ingredients) * 100
+
+                matching.append((recipe, percentage))
+
+            matching.sort(
+                key=lambda item: (
+                    -item[1],
+                    self._normalize_search_text(item[0].name),
+                )
+            )
+
+            self._match_percentages = {
+                recipe.id: percentage for recipe, percentage in matching
+            }
+
+            recipes = [recipe for recipe, _ in matching]
+
+        min_count = self.min_ingredient_count.value()
+
+        max_count = self.max_ingredient_count.value()
+
+        if min_count > 0:
+            recipes = [
+                recipe
+                for recipe in recipes
+                if len(get_recipe_ingredients(recipe.id)) >= min_count
+            ]
+
+        if max_count > 0:
+            recipes = [
+                recipe
+                for recipe in recipes
+                if len(get_recipe_ingredients(recipe.id)) <= max_count
+            ]
+
+        min_cost = self.min_cost_input.value()
+        max_cost = self.max_cost_input.value()
+
+        if min_cost > 0:
+            recipes = [
+                recipe
+                for recipe in recipes
+                if calculate_recipe_cost(recipe.id) >= min_cost
+            ]
+
+        if max_cost > 0:
+            recipes = [
+                recipe
+                for recipe in recipes
+                if calculate_recipe_cost(recipe.id) <= max_cost
+            ]
+
+        sort_option = self.sort_selector.currentText()
 
         if sort_option == "Hazırlama Süresi ↑":
             recipes.sort(key=lambda recipe: recipe.prep_time)
@@ -384,6 +640,336 @@ class MainWindow(QMainWindow):
 
         self._display_recipes(recipes)
 
-    def _handle_recipe_selection(self) -> None:
+    def _display_recipes(self, recipes) -> None:
+        self.recipe_list.blockSignals(True)
+        self.recipe_list.clear()
+
+        self._visible_recipes = list(recipes)
+
+        for recipe in self._visible_recipes:
+            recipe_ingredients = get_recipe_ingredients(recipe.id)
+
+            is_sufficient = bool(recipe_ingredients) and all(
+                ingredient.quantity >= required_quantity
+                for ingredient, required_quantity in recipe_ingredients
+            )
+
+            match_percentage = self._match_percentages.get(recipe.id)
+
+            display_text = f"{recipe.name} | {recipe.prep_time} dk | {recipe.category}"
+
+            if match_percentage is not None:
+                display_text += f" | Eşleşme: %{match_percentage:.0f}"
+
+            item = QListWidgetItem(display_text)
+
+            item.setData(
+                Qt.ItemDataRole.UserRole,
+                recipe.id,
+            )
+
+            item.setData(
+                Qt.ItemDataRole.UserRole + 1,
+                ("sufficient" if is_sufficient else "insufficient"),
+            )
+
+            if is_sufficient:
+                item.setForeground(Qt.GlobalColor.green)
+            else:
+                item.setForeground(Qt.GlobalColor.red)
+
+            self.recipe_list.addItem(item)
+
+        self.recipe_list.setCurrentRow(-1)
+        self.recipe_detail.clear()
+
+        self.recipe_list.blockSignals(False)
+
+    def _show_recipe_detail(self, row: int) -> None:
+        self.recipe_detail.clear()
+
+        if row < 0:
+            return
+
+        item = self.recipe_list.item(row)
+
+        if item is None:
+            return
+
+        recipe_id = item.data(Qt.ItemDataRole.UserRole)
+
+        if recipe_id is None:
+            return
+
+        recipe = next(
+            (recipe for recipe in self._visible_recipes if recipe.id == recipe_id),
+            None,
+        )
+
+        if recipe is None:
+            return
+
+        recipe_cost = calculate_recipe_cost(recipe.id)
+
+        recipe_ingredients = get_recipe_ingredients(recipe.id)
+
+        missing_cost = 0.0
+
+        detail_lines = [
+            f"Tarif: {recipe.name}",
+            f"Kategori: {recipe.category}",
+            (f"Hazırlama Süresi: {recipe.prep_time} dakika"),
+            f"Maliyet: {recipe_cost:.2f} TL",
+            "",
+            "Malzemeler:",
+        ]
+
+        for ingredient, required_quantity in recipe_ingredients:
+            detail_lines.append(
+                f"- {ingredient.name}: {required_quantity:g} {ingredient.unit}"
+            )
+
+            if ingredient.quantity < required_quantity:
+                missing_quantity = required_quantity - ingredient.quantity
+
+                missing_cost += missing_quantity * ingredient.unit_price
+
+        if missing_cost > 0:
+            detail_lines.insert(
+                4,
+                (f"Eksik Malzeme Maliyeti: {missing_cost:.2f} TL"),
+            )
+
+        detail_lines.extend(
+            [
+                "",
+                "Talimatlar:",
+                recipe.instructions,
+            ]
+        )
+
+        self.recipe_detail.setPlainText("\n".join(detail_lines))
+
+    def _add_recipe(self) -> None:
+        dialog = RecipeDialog(self)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        recipe = dialog.get_recipe()
+
+        try:
+            created_recipe = create_recipe(recipe)
+
+            if created_recipe.id is not None:
+                self._save_recipe_ingredients(
+                    created_recipe.id,
+                    dialog.get_ingredients(),
+                )
+
+            self._load_recipes()
+
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Hata",
+                f"Tarif eklenirken hata oluştu:\n{exc}",
+            )
+
+    def _update_recipe(self) -> None:
+        item = self.recipe_list.currentItem()
+
+        if item is None:
+            QMessageBox.warning(
+                self,
+                "Uyarı",
+                "Lütfen güncellenecek bir tarif seçin.",
+            )
+            return
+
+        recipe_id = item.data(Qt.ItemDataRole.UserRole)
+
+        if recipe_id is None:
+            return
+
+        recipe = next(
+            (
+                current_recipe
+                for current_recipe in get_all_recipes()
+                if current_recipe.id == recipe_id
+            ),
+            None,
+        )
+
+        if recipe is None:
+            QMessageBox.warning(
+                self,
+                "Uyarı",
+                "Tarif bulunamadı.",
+            )
+            return
+
+        dialog = RecipeDialog(self, recipe)
+
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        updated_recipe = dialog.get_recipe()
+
+        try:
+            update_recipe(updated_recipe)
+
+            old_ingredients = get_recipe_ingredients(recipe_id)
+
+            for ingredient, _required_quantity in old_ingredients:
+                if ingredient.id is not None:
+                    remove_ingredient_from_recipe(
+                        recipe_id,
+                        ingredient.id,
+                    )
+
+            self._save_recipe_ingredients(
+                recipe_id,
+                dialog.get_ingredients(),
+            )
+
+            self._load_recipes()
+
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Hata",
+                f"Tarif güncellenirken hata oluştu:\n{exc}",
+            )
+
+    def _delete_recipe(self) -> None:
         row = self.recipe_list.currentRow()
-        self._show_recipe_detail(row)
+
+        if row < 0:
+            QMessageBox.warning(
+                self,
+                "Uyarı",
+                "Silmek için bir tarif seçin.",
+            )
+            return
+
+        item = self.recipe_list.item(row)
+
+        if item is None:
+            return
+
+        recipe_id = item.data(Qt.ItemDataRole.UserRole)
+
+        recipe = next(
+            (recipe for recipe in self._recipes if recipe.id == recipe_id),
+            None,
+        )
+
+        if recipe is None:
+            return
+
+        answer = QMessageBox.question(
+            self,
+            "Tarif Sil",
+            (f"'{recipe.name}' tarifini silmek istediğinize emin misiniz?"),
+        )
+
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+
+        try:
+            delete_recipe(recipe.id)
+
+            self._load_recipes()
+
+            QMessageBox.information(
+                self,
+                "Başarılı",
+                "Tarif başarıyla silindi.",
+            )
+
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Hata",
+                f"Tarif silinemedi:\n{exc}",
+            )
+
+    def _save_recipe_ingredients(
+        self,
+        recipe_id: int,
+        ingredients: list[tuple[str, float]],
+    ) -> None:
+        for name, required_quantity in ingredients:
+            name = name.strip()
+
+            if not name or required_quantity <= 0:
+                continue
+
+            ingredient = Ingredient(
+                id=None,
+                name=name,
+                quantity=0.0,
+                unit="adet",
+                unit_price=0.0,
+            )
+
+            saved_ingredient = create_ingredient_if_not_exists(ingredient)
+
+            if saved_ingredient.id is None:
+                continue
+
+            add_ingredient_to_recipe(
+                recipe_id,
+                saved_ingredient.id,
+                required_quantity,
+            )
+
+    def _show_recommendations(self) -> None:
+        ingredients = get_all_ingredients()
+
+        user_ingredients = {
+            ingredient.id: ingredient.quantity
+            for ingredient in ingredients
+            if ingredient.id is not None and ingredient.quantity > 0
+        }
+
+        recommendations = recommend_recipes(user_ingredients)
+
+        if not recommendations:
+            QMessageBox.information(
+                self,
+                "Tarif Önerileri",
+                ("Mevcut malzemelerinizle eşleşen tarif bulunamadı."),
+            )
+            return
+
+        self._match_percentages = {
+            recipe.id: percentage for recipe, percentage in recommendations
+        }
+
+        self._display_recipes([recipe for recipe, _ in recommendations])
+
+    def _clear_filters(self) -> None:
+        self.search_input.clear()
+        self.ingredient_input.clear()
+
+        self.category_filter.setCurrentText("Tüm Kategoriler")
+
+        self.sort_selector.setCurrentText("Sıralama")
+
+        self.min_ingredient_count.setValue(0)
+        self.max_ingredient_count.setValue(0)
+
+        self.min_cost_input.setValue(0)
+        self.max_cost_input.setValue(0)
+
+        self._match_percentages = {}
+
+        self._refresh_filters()
+
+    def _open_ingredient_management(self) -> None:
+        dialog = IngredientManagementDialog(self)
+        dialog.exec()
+
+        self._load_recipes()

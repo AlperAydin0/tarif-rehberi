@@ -1,0 +1,135 @@
+\documentclass[conference]{IEEEtran}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{lmodern}
+\usepackage{hyperref}
+\usepackage{listings}
+\usepackage{booktabs}
+\hypersetup{colorlinks=true,linkcolor=black,urlcolor=blue,citecolor=black}
+
+\title{Tarif Rehberi Uygulaması\\
+\large Kocaeli Üniversitesi\\
+Bilgisayar Mühendisliği Bölümü\\
+Yazılım Laboratuvarı I}
+
+\author{\IEEEauthorblockN{Alper Aydın\\
+	190201064\\
+	190201064@kocaeli.edu.tr}
+}
+\begin{document}
+\maketitle
+\begin{abstract}
+Bu çalışmada, kullanıcıların yemek tariflerini saklayabildiği, tariflerin malzemelerini yönetebildiği ve elde bulunan malzemelere göre hangi tariflerin hazırlanabileceğini inceleyebildiği bir masaüstü uygulaması geliştirilmiştir. Uygulamada süre kısıtı ve geliştiricinin mevcut bilgi düzeyi dikkate alınarak Python tercih edilmiştir. Veritabanı yönetimi için SQLite, uygulama sorumluluklarının ayrıştırılması için katmanlı bir yapı ve geliştirme sürecinin doğrulanması için test odaklı bir yaklaşım kullanılmıştır. Uygulama; tarif ve malzeme ekleme, güncelleme, silme, tarif-malzeme ilişkilerinin yönetimi, dinamik arama ve filtreleme, maliyet hesaplama, malzeme yeterliliği, eksik malzeme maliyeti ve malzeme eşleşme yüzdesine göre tarif önerme gibi işlevleri içermektedir.
+\end{abstract}
+
+\begin{IEEEkeywords}
+Tarif Rehberi, Python, PySide6, SQLite, masaüstü uygulama, veritabanı, dinamik filtreleme, öneri sistemi, test odaklı geliştirme
+\end{IEEEkeywords}
+
+\section{Giriş}
+Projenin amacı, kullanıcıların yemek tariflerini kayıt altında tutabildiği ve mevcut malzemelerine göre uygun tarifleri görebildiği bir masaüstü uygulaması geliştirmektir. Uygulama kapsamında yalnızca tariflerin saklanması değil; veritabanı yönetimi, dinamik arama ve filtreleme, maliyet hesaplama, malzeme yeterliliğinin belirlenmesi, algoritmik değerlendirme ve kullanıcı arayüzünün kullanılabilir olması gibi birden fazla gereksinimin birlikte karşılanması hedeflenmiştir.
+
+Geliştirme sürecinde temel amaç, verilen süre içerisinde çalışan, test edilebilir ve proje gereksinimlerine odaklanan bir yazılım ortaya çıkarmaktır. Bu nedenle teknoloji seçimlerinde teorik olarak mümkün olan seçeneklerin tamamı yerine, geliştirme süresini ve mevcut yetkinliği en iyi değerlendiren seçenekler tercih edilmiştir.
+
+\section{Teknoloji Seçimi}
+\subsection{Python Tercihi}
+Proje için Python tercih edilmesinin temel nedeni süre kısıtıdır. Verilen süre içerisinde en hızlı ve kontrollü şekilde sonuç verebilmek amacıyla iyi bilinen ve rahat çalışılan bir programlama dili kullanılmıştır. Daha önce hâkim olunmayan yeni bir dil ve geliştirme ekosistemine geçiş yapmak, projenin işlevlerini gerçekleştirmek için ayrılabilecek zamanı azaltacağı için tercih edilmemiştir.
+
+Ödev kapsamında Java veya C\# kullanılması belirtilmesine rağmen, bu dillerin çalışma ortamlarının proje açısından gerekli bir teknik avantaj sağlamadığı değerlendirilmiştir. Java tarafında JVM, C\# tarafında ise .NET/CLR gibi çalışma ortamları güçlü ve yaygın çözümler olmakla birlikte, bu projede gerçekleştirilen veritabanı yönetimi, tarif-malzeme ilişkileri, dinamik filtreleme, maliyet hesaplama, öneri mekanizması ve masaüstü arayüzü gereksinimleri açısından bu çalışma ortamlarının ayrıca kullanılmasının doğrudan gerekli bir avantaj oluşturmadığı düşünülmüştür. Bu nedenle, süre kısıtı altında daha önce iyi bilinen Python ile devam edilerek geliştirme riskinin azaltılması ve proje gereksinimlerine daha fazla zaman ayrılması tercih edilmiştir.
+
+Bu karar, Java veya C\# dillerinin yetersiz olduğu anlamına gelmemektedir. Kararın temelinde projenin zaman sınırı, mevcut bilgi birikimi ve teknik gereksinimlerin seçilen teknoloji ile zaten karşılanabilmesi bulunmaktadır.
+
+\subsection{PySide6 ile Masaüstü Arayüz}
+PySide6; pencere, form, liste, metin alanı, buton, açılır kutu ve iletişim pencereleri gibi uygulamada ihtiyaç duyulan GUI bileşenlerini sağlamaktadır.
+
+Ana pencere; tarif listesi, tarif detayları, arama alanları, kategori ve sıralama seçenekleri, maliyet ve malzeme sayısı filtreleri ile tarif ve malzeme yönetimi düğmelerini içerecek şekilde tasarlanmıştır.
+
+\subsection{SQLite}
+Veritabanı yönetimi için SQLite kullanılmıştır. Uygulama masaüstü ve tek kullanıcı odaklı olduğundan ayrı bir veritabanı sunucusu çalıştırmayı gerektirmeyen dosya tabanlı bir veritabanı yeterli görülmüştür. Böylece kurulum ve geliştirme süreci sade tutulmuştur.
+
+\section{Mimari Yapı}
+Uygulamada sorumlulukların ayrıştırılmasına yönelik katmanlı bir yapı kullanılmıştır. Temel yapı model, repository, service ve GUI bölümlerinden oluşmaktadır.
+
+\begin{itemize}
+    \item \textbf{Model katmanı:} Tarif ve malzeme gibi temel veri yapılarını temsil eder.
+    \item \textbf{Repository katmanı:} Veritabanına erişim işlemlerini gerçekleştirir.
+    \item \textbf{Service katmanı:} İş kurallarını ve hesaplama işlemlerini yürütür.
+    \item \textbf{GUI katmanı:} Kullanıcı etkileşimini ve ekran davranışlarını yönetir.
+\end{itemize}
+
+Bu ayrım, veritabanı işlemlerinin kullanıcı arayüzü kodundan uzak tutulmasını ve iş mantığının bağımsız olarak test edilebilmesini sağlamıştır.
+
+\section{Veri Modeli ve Veritabanı}
+Tarifler ve malzemeler ayrı varlıklar olarak ele alınmıştır. Bir tarif birden fazla malzeme içerebildiği ve aynı malzeme birden fazla tarifte kullanılabildiği için tarif ile malzeme arasındaki ilişki ayrıca tutulmuştur.
+
+Tarif verisinde kimlik, ad, kategori, hazırlama süresi ve yapılış bilgisi bulunmaktadır. Malzeme verisinde kimlik, ad, elde bulunan miktar, birim ve birim fiyat bilgileri bulunmaktadır. Tarif-malzeme ilişkisi içerisinde ayrıca ilgili tarifte kullanılması gereken miktar saklanmaktadır. Böylece genel malzeme stok miktarı ile bir tarifte ihtiyaç duyulan miktar birbirinden ayrılmıştır.
+
+\section{Gerçekleştirilen Özellikler}
+\subsection{Tarif Yönetimi}
+Kullanıcı arayüzü üzerinden tarif ekleme, güncelleme ve silme işlemleri gerçekleştirilebilmektedir. Tarif ekleme sırasında tarif adı, kategori, hazırlama süresi, yapılış açıklaması ve kullanılan malzemeler tanımlanmaktadır.
+
+Tarif malzemeleri isim ve gerekli miktar ile girilmektedir. Örneğin aşağıdaki girişler bir tarifte kullanılacak malzemeleri ifade etmektedir:
+
+\begin{lstlisting}[basicstyle=\ttfamily\small]
+Domates=3
+Yumurta=3
+Biber=2
+Sogan=1
+\end{lstlisting}
+
+Bu bilgiler işlenerek ilgili malzeme bulunmakta veya gerekli durumda oluşturulmakta, daha sonra tarif ile malzeme arasındaki ilişki kaydedilmektedir.
+
+\subsection{Malzeme Yönetimi}
+Malzemelerin tariflerden bağımsız olarak yönetilebilmesi amacıyla ayrı bir malzeme yönetimi ekranı oluşturulmuştur. Kullanıcı bu ekrandan malzeme ekleyebilmekte, miktar, birim ve birim fiyat gibi değerleri güncelleyebilmekte ve malzeme silebilmektedir.
+
+Bu yaklaşım sayesinde aynı malzeme birden fazla tarifte kullanılabilmekte ve kullanıcının elindeki malzeme miktarı tek bir merkezden güncellenebilmektedir.
+
+\subsection{Dinamik Arama ve Filtreleme}
+Tarif adı üzerinden dinamik arama yapılabilmektedir. Bunun yanında kategori ve malzeme adına göre filtreleme yapılabilmektedir. Tarif içerisindeki malzeme sayısı ile toplam maliyet için alt ve üst sınır tanımlanabilmektedir.
+
+Filtreler birlikte uygulanabildiği için kullanıcı örneğin belirli bir kategoride bulunan, seçilen bir malzemeyi içeren ve belirli bir maliyet aralığındaki tarifleri aynı anda görüntüleyebilmektedir.
+
+\subsection{Sıralama}
+Tarifler hazırlama süresine ve maliyete göre artan veya azalan biçimde sıralanabilmektedir. Ayrıca eldeki malzemeler ile tarif arasındaki eşleşme yüzdesine göre sıralama yapılabilmektedir.
+
+\subsection{Maliyet Hesaplama}
+Her tarifin toplam maliyeti, tarifte gereken malzeme miktarı ile ilgili malzemenin birim fiyatı kullanılarak hesaplanmaktadır. Bunun yanında kullanıcının elinde bulunmayan miktarlar ayrı olarak hesaplanmakta ve eksik malzemelerin toplam maliyete etkisi tarif detayında gösterilmektedir.
+
+\subsection{Malzeme Yeterliliği}
+Her tarif için gerekli malzemeler ile kullanıcının mevcut malzeme miktarları karşılaştırılmaktadır. Gerekli tüm malzemeleri yeterli miktarda bulunan tarifler arayüzde yeşil, eksik veya yetersiz malzemesi bulunan tarifler kırmızı olarak gösterilmektedir.
+
+Bu karar, kullanıcının tarif listesini yalnızca isim ve maliyet açısından değil, mevcut stok açısından da hızlı biçimde değerlendirmesini sağlamaktadır.
+
+\subsection{Eşleşme Yüzdesi}
+Tarifin gerektirdiği malzemelerin ne kadarının yeterli olduğu hesaplanarak bir eşleşme yüzdesi üretilmektedir. Böylece kullanıcı bir tarif için yalnızca yapılabilir veya yapılamaz şeklinde ikili bir sonuç değil, mevcut malzemelerinin tarife ne yüzdeyle uyduğunu da görebilmektedir.
+
+\subsection{Tarif Önerme}
+Mevcut malzemelere göre tarif önerilmesi amacıyla bir öneri mekanizması geliştirilmiştir. Tariflerin eşleşme yüzdeleri hesaplanmakta ve buna göre uygun tarifler listelenmektedir.
+
+\section{Kullanıcı Arayüzü}
+Ana pencerede tarif listesi ve seçili tarifin detayları aynı ekran üzerinde gösterilmektedir. Bir tarif seçildiğinde kategori, hazırlama süresi, toplam maliyet, malzemeler, eşleşme yüzdesi, eksik malzemeler ve eksik malzeme maliyetleri görüntülenebilmektedir.
+
+Arama, filtreleme ve sıralama seçeneklerinin aynı ana pencere üzerinde toplanması ile kullanıcı etkileşiminin mümkün olduğunca tek bir ekran üzerinden yürütülmesi amaçlanmıştır. Tarif yönetimi yanında malzeme yönetimi için de ayrı bir kontrol eklenmiştir.
+
+\section{Test Odaklı Geliştirme}
+Geliştirme sürecinde test odaklı bir yaklaşım izlenmiştir. Repository ve service katmanlarında veri ekleme, güncelleme, silme, maliyet hesabı, malzeme eşleşmesi ve öneri gibi işlevler için testler hazırlanmıştır.
+
+Testlerin gerçek veritabanını etkilememesi amacıyla test ortamında geçici SQLite veritabanları kullanılmıştır. Böylece her test çalışmasında izole bir veri ortamı oluşturulabilmiştir.
+
+GUI geliştirme aşamasında da ana pencerenin oluşturulması, gerekli bileşenlerin bulunması, tariflerin listelenmesi, tarif seçildiğinde detayların gösterilmesi ve yeterlilik durumlarının arayüzde yansıtılması gibi davranışlar doğrulanmıştır.
+
+Geliştirme sürecinin sonunda test altyapısı ile birlikte uygulama davranışları aşamalı biçimde kontrol edilmiş ve GUI ile mevcut servis katmanının birlikte çalışması sağlanmıştır.
+
+\section{Örnek Veriler ve Kapsam Kararı}
+Uygulamanın temel özelliklerini göstermek için toplam 10 örnek tarif hazırlanmıştır. Bu tarifler beşten fazla kategoriye dağılmaktadır. Kullanılan kategoriler arasında Ana Yemek, Çorba, Atıştırmalık, Salata, Pilav, Kahvaltı ve Tatlı bulunmaktadır.
+
+Örnek tarifler Menemen, Mercimek Çorbası, Kıymalı Makarna, Patates Kızartması, Tavuk Sote, Çoban Salata, Pilav, Omlet, Sütlaç ve Krep olarak belirlenmiştir.
+
+\section{Sonuç}
+Bu çalışmada, tarif ve malzemelerin yönetilebildiği, tarif-malzeme ilişkilerinin veritabanında tutulduğu ve kullanıcının mevcut malzemelerine göre tarifleri değerlendirebildiği bir masaüstü uygulaması geliştirilmiştir.
+
+Python ve PySide6 seçimi, süre kısıtı altında iyi bilinen bir teknoloji ile hızlı ve kontrollü ilerleme amacıyla yapılmıştır. Java için JVM ve C\# için .NET/CLR gibi çalışma ortamlarının güçlü çözümler olduğu kabul edilmekle birlikte, bu proje özelinde bunların kullanılmasının gerekli bir teknik avantaj sağlamadığı değerlendirilmiş ve mevcut Python bilgisi kullanılarak proje gereksinimlerine odaklanılmıştır.
+
+Geliştirilen uygulama; veritabanı yönetimi, dinamik arama ve filtreleme, algoritmik değerlendirme, maliyet hesabı, malzeme yeterliliği, öneri mekanizması ve grafiksel kullanıcı arayüzünü birlikte sunmaktadır. Proje boyunca alınan kararların temelinde, süreyi etkili kullanmak ve doğrudan gereksinimlere karşılık veren, test edilebilir ve kullanılabilir bir uygulama ortaya çıkarmak bulunmaktadır.
+
+\end{document}
